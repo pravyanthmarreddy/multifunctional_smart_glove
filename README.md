@@ -1,96 +1,91 @@
 # Multifunctional Smart Glove
 
-Arduino UNO prototype for monitoring external conditions during inspection and maintenance.
+An Arduino Uno-based wearable sensing project that monitors temperature, vibration and pressure/contact using multiple sensors. Sensor readings are displayed on an I2C OLED and printed to the Serial Monitor.
 
-## Project functions
+## Features
 
-- **Temperature:** MLX90614 non-contact infrared temperature sensor.
-- **Pressure / force response:** FSR402 force-sensitive resistor.
-- **Vibration:** HW-072 vibration switch/module.
-- **Feedback (prototype):** optional LED and buzzer outputs.
-- **Contact detection:** conductive touch/contact probe is part of the planned hardware; its exact interface has not yet been specified.
+- **Temperature monitoring:** GY-906 MLX90614 infrared temperature sensor.
+- **Vibration detection:** HW-072 vibration sensor.
+- **Pressure/contact sensing:** FSR402 force-sensitive resistor.
+- **OLED output:** Displays temperature, pressure score and vibration status.
+- **Temperature alert:** Buzzer activates when the object temperature reaches the configured threshold.
+- **Serial monitoring:** Displays sensor readings for testing and debugging.
 
-The current firmware reports sensor readings over the Arduino Serial Monitor. It is intended for prototyping and calibration, not as a certified safety device.
+## Hardware Components
 
-## Hardware status
+| Component | Quantity |
+|---|---:|
+| Arduino Uno | 1 |
+| GY-906 MLX90614 | 1 |
+| HW-072 vibration sensor | 1 |
+| FSR402 | 1 |
+| 0.96-inch I2C OLED (SSD1306) | 1 |
+| Active buzzer | 1 |
+| Resistor for FSR voltage divider | 1 |
+| Battery pack and suitable regulated power supply | 1 |
 
-| Component | Status in this repository |
+## Pin Connections
+
+| Component | Arduino Uno |
 |---|---|
-| Arduino UNO | Confirmed |
-| MLX90614 IR temperature sensor | Confirmed |
-| HW-072 vibration sensor | Confirmed |
-| FSR402 pressure sensor | Confirmed |
-| Conductive touch/contact probe | Hardware mentioned; exact module/wiring to be confirmed |
-| 5 V buzzer | Planned output; use a transistor driver |
-| LED + 220 Ω resistor | Planned output |
-| 3 × 3.7 V Li-ion cells | Battery pack mentioned; series/parallel arrangement must be verified |
-| MT306 boost converter | Converter model marking and electrical limits must be verified |
-| OLED/display | Not confirmed; not included in firmware pin map |
+| MLX90614 SDA | A4 |
+| MLX90614 SCL | A5 |
+| OLED SDA | A4 |
+| OLED SCL | A5 |
+| HW-072 DO | D2 |
+| FSR voltage-divider output | A0 |
+| Buzzer signal | D8 |
+| VCC | 5V, where supported |
+| GND | GND |
 
-## Repository structure
+The OLED and MLX90614 share the I2C bus.
+
+## Software Requirements
+
+Install the following libraries through Arduino IDE Library Manager:
+
+1. Adafruit MLX90614
+2. Adafruit SSD1306
+3. Adafruit GFX Library
+
+Select **Arduino Uno** as the board and upload `smart_glove.ino`.
+
+## Repository Structure
 
 ```text
-smart-glove/
+Multifunctional-Smart-Glove/
+│
+├── smart_glove.ino
 ├── README.md
+├── LICENSE
 ├── .gitignore
+│
 ├── docs/
 │   ├── wiring.md
-│   └── power-and-safety.md
-└── firmware/
-    ├── smart_glove/
-    │   └── smart_glove.ino
-    ├── fsr402_test/
-    │   └── fsr402_test.ino
-    ├── mlx90614_test/
-    │   └── mlx90614_test.ino
-    └── hw072_test/
-        └── hw072_test.ino
+│   └── troubleshooting.md
+│
+└── sensor_tests/
+    ├── MLX_sen_test.ino
+    ├── FSR_sen_test.ino
+    └── vibration_sensor_testing.ino
 ```
 
-## Arduino libraries
+## Working Principle
 
-Install through Arduino IDE → Library Manager:
+1. The MLX90614 measures object and ambient temperature.
+2. The HW-072 detects vibration through its digital output.
+3. The FSR402 produces an analog reading based on applied force.
+4. The Arduino processes the readings and updates the OLED.
+5. The buzzer provides an alert when the configured temperature threshold is reached.
 
-- **Adafruit MLX90614** (for the MLX90614 sensor)
-- **Adafruit BusIO** (dependency, normally installed automatically)
+## Important Notes
 
-The FSR402 and HW-072 sketches use built-in Arduino functions and need no extra library.
+- The FSR percentage is a scaled analog reading, not calibrated force.
+- The temperature alert threshold is set to 40°C in the code and can be changed.
+- The vibration output is configured as active-LOW. Change `VIBRATION_ACTIVE_LEVEL` if your module behaves differently.
+- The OLED is configured for I2C address `0x3C`. Some displays use `0x3D`.
+- Verify the regulated supply voltage and common ground before powering the circuit. Do not connect an unregulated battery pack directly to the Arduino 5V pin.
 
-## Pin map used by the starter firmware
+## Project Status
 
-| Arduino UNO pin | Function |
-|---|---|
-| A0 | FSR402 analog output / voltage-divider midpoint |
-| A4 | MLX90614 SDA |
-| A5 | MLX90614 SCL |
-| D2 | HW-072 digital output |
-| D8 | Buzzer driver input (optional) |
-| D9 | LED output through 220 Ω resistor (optional) |
-
-**Note:** A4/A5 are the UNO's I²C pins. If another I²C display is added later, it can share SDA/A4 and SCL/A5, provided its address and voltage compatibility are checked. The display is not assumed to be present.
-
-## Getting started
-
-1. Read [`docs/power-and-safety.md`](docs/power-and-safety.md) before connecting the battery.
-2. Wire and test each sensor individually using the sketches in `firmware/`.
-3. Install the Adafruit MLX90614 library.
-4. Open `firmware/smart_glove/smart_glove.ino` in Arduino IDE.
-5. Select **Arduino UNO**, select the correct port, upload, and open Serial Monitor at **9600 baud**.
-6. Keep the FSR402 unloaded during startup calibration.
-
-## FSR402 reading
-
-The firmware reports:
-- `fsr_raw`: Arduino ADC reading (0–1023).
-- `pressure_score`: relative response from 0.0 to 100.0 after subtracting the startup baseline.
-
-This score is **not** force in grams, Newtons, or pressure in kPa. FSRs are nonlinear and must be calibrated with known loads for physical-force estimates.
-
-## Development notes
-
-- Test sensors individually before integrating them.
-- Calibrate the FSR402 with no load at startup and keep it untouched during calibration.
-- Tune the HW-072 module's onboard potentiometer, if present, for the desired vibration sensitivity.
-- Confirm the MLX90614 breakout's VIN range and I²C logic-level compatibility.
-- Add thresholds and alerts only after readings are stable.
-- This prototype is not a medical device or certified industrial safety system.
+Completed prototype with temperature sensing, vibration detection, pressure/contact sensing and OLED output.
