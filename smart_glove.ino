@@ -1,145 +1,239 @@
-/*
-  Multifunctional Smart Glove - Arduino UNO starter firmware
-
-  Sensors:
-    FSR402       -> A0 (10k voltage divider to GND)
-    MLX90614     -> I2C: SDA=A4, SCL=A5
-    HW-072       -> DO=D2
-
-  Optional outputs:
-    Buzzer driver input -> D8
-    LED (through 220 ohm resistor) -> D9
-
-  Serial Monitor: 9600 baud
-
-  Required library:
-    Adafruit MLX90614
-
-  IMPORTANT:
-    - Keep the FSR unloaded during startup baseline calibration.
-    - pressure_score is a relative 0-100 score, NOT calibrated force.
-    - Verify sensor breakout voltage compatibility before powering.
-*/
 
 #include <Wire.h>
 #include <Adafruit_MLX90614.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-const byte FSR_PIN = A0;
-const byte VIBRATION_PIN = 2;
-const byte BUZZER_PIN = 8;  // Optional: drives a transistor, not a high-current buzzer directly
-const byte LED_PIN = 9;     // Optional LED through 220 ohm resistor
+// ---------------- OLED SETTINGS ----------------
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define OLED_ADDRESS  0x3C
 
-const bool ENABLE_BUZZER = false;
-const bool ENABLE_LED = false;
+Adafruit_SSD1306 display(
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  &Wire,
+  OLED_RESET
+);
 
-// Change to LOW if your HW-072 module's DO output is active-LOW.
-const byte VIBRATION_ACTIVE_STATE = HIGH;
-
-const unsigned long SERIAL_INTERVAL_MS = 250;
-const unsigned int FSR_SAMPLES = 20;
-const unsigned int BASELINE_SAMPLES = 100;
-
+// ---------------- SENSOR OBJECTS ----------------
 Adafruit_MLX90614 mlx = Adafruit_MLX90614();
 
-float fsrBaseline = 0.0;
+// ---------------- PIN CONFIGURATION ----------------
+const byte VIBRATION_PIN = 2;
+const byte FSR_PIN       = A0;
+const byte BUZZER_PIN    = 8;
+
+// HW-072 output observed LOW during vibration.
+// Change to HIGH if your module behaves oppositely.
+const byte VIBRATION_ACTIVE_LEVEL = LOW;
+
+// Temperature warning threshold in Celsius.
+// Adjust this threshold to suit your project demonstration.
+const float TEMP_LIMIT_C = 40.0;
+
+// ---------------- SENSOR STATUS ----------------
 bool mlxAvailable = false;
-unsigned long lastPrint = 0;
+bool oledAvailable = false;
 
-float readFsrAverage() {
-  unsigned long total = 0;
-  for (unsigned int i = 0; i < FSR_SAMPLES; i++) {
-    total += analogRead(FSR_PIN);
-    delay(2);
-  }
-  return (float)total / FSR_SAMPLES;
+// ---------------- VARIABLES ----------------
+float objectTempC = 0.0;
+float ambientTempC = 0.0;
+int fsrRaw = 0;
+float pressurePercent = 0.0;
+bool vibrationDetected = false;
+
+// ---------------- OLED DISPLAY ----------------
+void showStartupMessage() {
+  if (!oledAvailable) return;
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println(F("MULTIFUNCTIONAL"));
+  display.println(F("SMART GLOVE"));
+  display.println();
+  display.println(F("Initializing..."));
+  display.display();
 }
 
-void calibrateFsr() {
-  Serial.println(F("FSR calibration: keep sensor completely unloaded."));
-  delay(1500);
+void showSensorError() {
+  if (!oledAvailable) return;
 
-  unsigned long total = 0;
-  for (unsigned int i = 0; i < BASELINE_SAMPLES; i++) {
-    total += analogRead(FSR_PIN);
-    delay(10);
-  }
-
-  fsrBaseline = (float)total / BASELINE_SAMPLES;
-  Serial.print(F("FSR baseline = "));
-  Serial.println(fsrBaseline, 1);
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(F("SMART GLOVE"));
+  display.println(F("----------------"));
+  display.println(F("MLX90614 ERROR"));
+  display.println(F("Check I2C wiring"));
+  display.println(F("OLED is working"));
+  display.display();
 }
 
+void updateOLED() {
+  if (!oledAvailable) return;
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+
+  display.setCursor(0, 0);
+  display.println(F("SMART GLOVE"));
+  display.drawLine(0, 10, 127, 10, SSD1306_WHITE);
+
+  display.setCursor(0, 14);
+  display.print(F("Object: "));
+  if (mlxAvailable) {
+    display.print(objectTempC, 1);
+    display.println(F(" C"));
+  } else {
+    display.println(F("Sensor Error"));
+  }
+
+  display.setCursor(0, 26);
+  display.print(F("Ambient: "));
+  if (mlxAvailable) {
+    display.print(ambientTempC, 1);
+    display.println(F(" C"));
+  } else {
+    display.println(F("--"));
+  }
+
+  display.setCursor(0, 38);
+  display.print(F("Pressure: "));
+  display.print(pressurePercent, 1);
+  display.println(F("%"));
+
+  display.setCursor(0, 50);
+  display.print(F("Vibration: "));
+  display.println(
+    vibrationDetected ? F("DETECTED") : F("NO")
+  );
+
+  display.display();
+}
+
+// ---------------- SERIAL MONITOR ----------------
+void printSerialData() {
+  Serial.println(F("------ SMART GLOVE ------"));
+
+  if (mlxAvailable) {
+    Serial.print(F("Object Temperature: "));
+    Serial.print(objectTempC, 2);
+    Serial.println(F(" C"));
+
+    Serial.print(F("Ambient Temperature: "));
+    Serial.print(ambientTempC, 2);
+    Serial.println(F(" C"));
+  } else {
+    Serial.println(F("MLX90614: NOT AVAILABLE"));
+  }
+
+  Serial.print(F("FSR Raw Value: "));
+  Serial.println(fsrRaw);
+
+  Serial.print(F("Pressure Score: "));
+  Serial.print(pressurePercent, 1);
+  Serial.println(F("%"));
+
+  Serial.print(F("Vibration: "));
+  Serial.println(
+    vibrationDetected ? F("DETECTED") : F("NOT DETECTED")
+  );
+
+  Serial.print(F("Temperature Alert: "));
+  Serial.println(
+    (mlxAvailable && objectTempC >= TEMP_LIMIT_C)
+      ? F("WARNING")
+      : F("NORMAL")
+  );
+
+  Serial.println(F("-------------------------"));
+  Serial.println();
+}
+
+// ---------------- SETUP ----------------
 void setup() {
   Serial.begin(9600);
-  pinMode(VIBRATION_PIN, INPUT);
+
+  pinMode(VIBRATION_PIN, INPUT_PULLUP);
+  pinMode(FSR_PIN, INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  pinMode(LED_PIN, OUTPUT);
 
   digitalWrite(BUZZER_PIN, LOW);
-  digitalWrite(LED_PIN, LOW);
 
   Wire.begin();
 
-  Serial.println(F("\nMultifunctional Smart Glove"));
-  Serial.println(F("Starting sensors..."));
+  // Initialize OLED
+  oledAvailable = display.begin(
+    SSD1306_SWITCHCAPVCC,
+    OLED_ADDRESS
+  );
 
-  mlxAvailable = mlx.begin();
-  if (mlxAvailable) {
-    Serial.println(F("MLX90614 detected."));
+  if (oledAvailable) {
+    showStartupMessage();
   } else {
-    Serial.println(F("WARNING: MLX90614 not detected. Check VIN/GND/SDA/SCL."));
+    Serial.println(F("OLED initialization failed."));
+    Serial.println(F("Check OLED address and wiring."));
   }
 
-  calibrateFsr();
+  // Initialize MLX90614
+  mlxAvailable = mlx.begin();
 
-  Serial.println(F("Ready. Serial output begins."));
-  Serial.println(F("Columns: fsr_raw, pressure_score, object_C, ambient_C, vibration"));
+  if (mlxAvailable) {
+    Serial.println(F("MLX90614 initialized."));
+  } else {
+    Serial.println(F("MLX90614 initialization failed."));
+    showSensorError();
+  }
+
+  Serial.println();
+  Serial.println(F("MULTIFUNCTIONAL SMART GLOVE"));
+  Serial.println(F("System initialization complete."));
+  Serial.println();
+  delay(1500);
 }
 
+// ---------------- MAIN LOOP ----------------
 void loop() {
-  float fsrRaw = readFsrAverage();
+  // Read temperature sensor
+  if (mlxAvailable) {
+    objectTempC = mlx.readObjectTempC();
+    ambientTempC = mlx.readAmbientTempC();
 
-  // Convert the increase above the unloaded baseline into a relative 0-100 score.
-  float pressureScore = 0.0;
-  float availableRange = 1023.0 - fsrBaseline;
-
-  if (fsrRaw > fsrBaseline + 3.0 && availableRange > 0.0) {
-    pressureScore = ((fsrRaw - fsrBaseline) / availableRange) * 100.0;
-  }
-
-  pressureScore = constrain(pressureScore, 0.0, 100.0);
-
-  bool vibrationDetected =
-      (digitalRead(VIBRATION_PIN) == VIBRATION_ACTIVE_STATE);
-
-  if (ENABLE_LED) {
-    digitalWrite(LED_PIN, vibrationDetected ? HIGH : LOW);
-  }
-
-  if (ENABLE_BUZZER) {
-    digitalWrite(BUZZER_PIN, vibrationDetected ? HIGH : LOW);
-  }
-
-  if (millis() - lastPrint >= SERIAL_INTERVAL_MS) {
-    lastPrint = millis();
-
-    Serial.print(F("fsr_raw="));
-    Serial.print(fsrRaw, 1);
-
-    Serial.print(F(", pressure_score="));
-    Serial.print(pressureScore, 1);
-
-    if (mlxAvailable) {
-      Serial.print(F(", object_C="));
-      Serial.print(mlx.readObjectTempC(), 1);
-
-      Serial.print(F(", ambient_C="));
-      Serial.print(mlx.readAmbientTempC(), 1);
-    } else {
-      Serial.print(F(", object_C=NA, ambient_C=NA"));
+    // Reject obviously invalid readings
+    if (isnan(objectTempC) || isnan(ambientTempC)) {
+      mlxAvailable = false;
     }
-
-    Serial.print(F(", vibration="));
-    Serial.println(vibrationDetected ? F("1") : F("0"));
   }
+
+  // Read FSR402
+  fsrRaw = analogRead(FSR_PIN);
+
+  // Convert ADC reading (0-1023) to a 0-100 score.
+  // This is a percentage-style score, NOT calibrated force.
+  pressurePercent = (fsrRaw / 1023.0) * 100.0;
+
+  // Read vibration sensor
+  vibrationDetected =
+    (digitalRead(VIBRATION_PIN) == VIBRATION_ACTIVE_LEVEL);
+
+  // Temperature warning controls the buzzer
+  bool temperatureWarning =
+    mlxAvailable && (objectTempC >= TEMP_LIMIT_C);
+
+  digitalWrite(
+    BUZZER_PIN,
+    temperatureWarning ? HIGH : LOW
+  );
+
+  // Update OLED and Serial Monitor
+  updateOLED();
+  printSerialData();
+
+  delay(300);
 }
